@@ -20,19 +20,19 @@ Play it at https://chamigolf.github.io/
 
 ## Courses
 
-3C Par Three (where everyone starts) → Chami Links Crimson → Chami Links Gold → Chami Links Black, plus TPC Saragosa, Farbor Lake, Meribah Country Club, Brothers Hollow and Deans Valley (its 18th hole is Room 23), Gold Star Mini Golf and the Daily Closest to the Pin.
+All courses are available from the start: 3C Par Three, Chami Links Crimson, Gold and Black, TPC Saragosa, Farbor Lake, Meribah Country Club, Brothers Hollow, Deans Valley (its 18th hole is Room 23), Gold Star Mini Golf and the Daily Closest to the Pin.
 
 ## Clubs and upgrades
 
-- Each club has three upgrades (Power, Accuracy, Control), up to level 5 each. A stat can only go one level past the club's lowest stat.
-- Lots of club models to buy in every slot, and club colours (buy a colour once, paint any club).
+- Every club model is available, and every upgrade track (Power, Accuracy, Control) starts at level 5.
+- All club colors are available for every club.
 
 ## Online
 
 - Daily Tournaments for every course, mini golf and Closest to the Pin. No sign-in needed to post: you just need a name (anyone still called "Player" is asked for one).
 - Sign in with Google to save progress to the cloud and play friends.
 - Premium badges (Creator's Pick, Daily Champion, Hole in One) show next to your name on the leaderboards, and each badge tile shows how many golfers have it. Creator's Pick goes to golfers who helped make the game or had a suggestion added.
-- Unlockable outfits: the Senior Sweater (within 10 feet in the Daily Closest to the Pin) and the Masters Outfit (par or better at Chami Links Black).
+- All outfits, golf bags, colors, ball markings and achievement rewards are available on every save.
 - Reloaded mid-round? Keep playing, finish the round early (paid for the holes you played), or quit.
 - A "Hole-in-ones today" banner on the Play tab (it shows up once someone makes one; mini golf aces don't count).
 
@@ -43,16 +43,14 @@ Play it at https://chamigolf.github.io/
 - **2v2**: scramble, alt shot or best ball. **Foursome**: own ball (1v1v1v1, up to 4 golfers, lowest total wins the pot) or a 2 v 2 scramble. The host sets one buy-in that every golfer pays; a pop-up confirms it when you join, and you can't join without enough money.
 - Everyone gets the same wind. Winners split the pot. Quitting a match forfeits it for your team.
 
-## Anti-cheat and creator tools
+## Creator tools
 
-- The game catches edited saves, money or gear it never paid out, impossible rounds and absurd drives. Strong signs ban the device right away; smaller ones are flagged.
-- Money: every payout goes through the game's ledger. $5,000+ showing up in the bank at once (or in total) that the game didn't pay out is an automatic ban, and so is a bank bigger than everything the golfer has ever earned. The Firebase rules enforce the same limit on cloud saves.
-- The creator's account (🛡️ button on the home screen) has Find a player (search by name, give or take back Creator's Pick 🎁, ban), cheat flags (with a 💰 money-only filter), bans/unbans and the leaderboards (remove a score, ban, 🎁).
-- Money flags for review (not bans): earning over $25,000 in an hour, a bank above everything ever earned, and friends-match pots of $5,000+ or won by forfeit. Player counts, players online and rounds played are in Google Analytics.
+- The creator's account (🛡️ button on the home screen) has Find a player (search by name, give or take back Creator's Pick 🎁) and leaderboards (remove a score, 🎁).
+- Player counts, players online and rounds played are in Google Analytics.
 
 ## Updates and pop-ups
 
-- To announce an update to players, edit `NEWS_VER` and the `NEWS` list in index.html. Each golfer sees it once. Only list things players can see (nothing about anti-cheat or creator tools).
+- To announce an update to players, edit `NEWS_VER` and the `NEWS` list in index.html. Each golfer sees it once. Only list things players can see.
 - New players get a welcome pointing them to the 3C Par Three, plus one-time tips the first time they open Clubs and Golfer.
 
 ## Firebase free plan
@@ -63,7 +61,7 @@ The game is built to stay on the free Spark plan (50,000 reads and 20,000 writes
 - Leaderboards are remembered for 5 minutes, even through a reload. Your own new score is added to the remembered board instead of downloading it again, and posting skips the "current best" lookup.
 - Today's tournaments card only loads when someone taps "See today's leaders" (then it's remembered for 10 minutes).
 - Today's holes-in-one are one record per day (1 read for the banner).
-- Badge counts load once per visit; the ban check runs every 15 minutes.
+- Badge counts load once per visit.
 - Play Friends invites are only watched on the home screen (newest 10). Stroke play and best ball send one score per hole; scramble and alt shot send every shot because players take turns.
 - No "last seen" notes or daily counters: those stats come from Google Analytics.
 - The creator's Find a player search uses a tiny player directory: one record per golfer, written only when they first pick a name or change it.

@@ -810,17 +810,6 @@
   </div>
 </div>
 
-<!-- ===== Banned ===== -->
-<div id="bannedOv" class="overlay hidden" style="z-index:60">
-  <div class="card">
-    <h2>⛔ Banned</h2>
-    <div class="sub">This device has been banned for suspected cheating, so it can't play or post scores.</div>
-    <div class="sub" id="banWhy" style="color:var(--gold-l)"></div>
-    <div class="sub">If you think this is a mistake, ask the creator to take a look.</div>
-  </div>
-</div>
-
-
 <!-- ===== Match scorecard between holes / match result ===== -->
 <div id="mpOv" class="overlay hidden">
   <div class="card" style="max-width:560px">
@@ -899,7 +888,7 @@
   <div class="card">
     <h2>Welcome to Chami Golf! ⛳</h2>
     <div class="tipBig">To get started, enter the <b>3C Par Three</b></div>
-    <div class="sub" style="font-size:14px;line-height:1.5">It's where everyone starts. Beat it to unlock Chami Links, TPC Saragosa, Meribah, Deans Valley and more.<br><br>
+    <div class="sub" style="font-size:14px;line-height:1.5">Start here, or pick any course from the full course list.<br><br>
       Every birdie, eagle and ace pays out: spend it on <b>clubs, outfits and bags</b>, earn <b>premium badges</b>, take on the <b>Daily Closest to the Pin</b> and challenge your friends head to head.<br><br>
       Swipe to aim, press the ball and pull back, and let go in the gold zone. Good luck!</div>
     <div class="btns" style="margin-top:14px"><button class="main" id="resetOk">Go to 3C Par Three</button></div>
@@ -1134,8 +1123,7 @@
 
   // ================= Save data =================
   const SAVE_KEY = 'fairwayclub-save';
-  // FULL RESET (Oct 14 2026): bumping this wipes every player's progress (money, gear, stats, unlocks, awards) on every
-  // device and in the cloud the next time they open the game. Names, sign-ins, friends and settings are kept.
+  // Legacy reset: older save epochs lose their former progress; startup grants the full catalog and upgrades below.
   const RESET_EPOCH = 1, RESET_KEEP = ['noteVer', 'name', 'pid', 'uid', 'friendCode', 'friends', 'ui', 'lefty', 'signinDay', 'badgeAuto', 'migClassic', 'migSchoolBag'];
   const resetSave = old => { const k = {}; RESET_KEEP.forEach(x => { if (old && old[x] !== undefined) k[x] = old[x]; }); return Object.assign(freshSave(), k, { epoch: RESET_EPOCH, mtime: 0, resetNote: 1 }); };
   const freshStats = () => ({ rounds: 0, holes: 0, aces: 0, eagles: 0, birdies: 0, pars: 0, shots: 0, perfects: 0,
@@ -1144,26 +1132,11 @@
   const freshSave = () => ({ coins: 0, lv: {}, up: {}, migUp: 1, ball: 0, course: 'par3', stats: freshStats(), bag: STARTER_BAG.slice(), owned: STARTER_BAG.slice(),
     name: 'Player', look: Object.assign({}, LOOK_PRESETS[0].look), gbag: Object.assign({}, BAG_PRESETS[0].bag), board: {}, awards: {}, unlocks: {}, ownedLook: {},
     clubCol: {}, badges: {}, badge: '', lefty: false, epoch: RESET_EPOCH });
-  // ---- Anti-cheat: a fingerprint of everything money can buy. Editing the save by hand breaks it. ----
-  const canon = v => v && typeof v === 'object' ? (Array.isArray(v) ? '[' + v.map(canon).join(',') + ']'
-    : '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + canon(v[k])).join(',') + '}') : JSON.stringify(v === undefined ? null : v);
-  function sigOf(s) {
-    const st = s.stats || {};
-    const src = canon([s.coins, s.lv, s.up, s.ball, s.owned, s.bag, st.earnedTotal, st.aces, st.perfects, st.rounds, st.longest, s.unlocks, s.ownedLook, s.badges]) + '|cg·fairway·7319';
-    let h1 = 0x811c9dc5, h2 = 0x1b873593;
-    for (let i = 0; i < src.length; i++) { const c = src.charCodeAt(i); h1 = Math.imul(h1 ^ c, 16777619); h2 = Math.imul(h2 ^ (c + i), 2246822519); }
-    return ((h1 >>> 0).toString(36) + (h2 >>> 0).toString(36));
-  }
-  let tamperedSave = false;
   let save = freshSave();
   let hadSave = false; try { hadSave = !!localStorage.getItem(SAVE_KEY); } catch (e) {}
   try {
     let s = JSON.parse(localStorage.getItem(SAVE_KEY));
     if (s && (s.epoch | 0) < RESET_EPOCH) s = resetSave(s);   // the full reset: start over, keep who you are
-    else if (s) {
-      // the save was edited outside the game (a save with progress but no fingerprint was edited too: the game always writes one)
-      if (s.sig ? s.sig !== sigOf(s) : ((s.coins | 0) > 0 || (s.stats && s.stats.earnedTotal > 0))) tamperedSave = true;
-    }
     if (s) {
       save = Object.assign(save, s);
       save.stats = Object.assign(freshStats(), s.stats || {});
@@ -1182,6 +1155,7 @@
   STARTER_BAG.forEach(id => { if (!save.owned.includes(id)) save.owned.push(id); });
   save.look = Object.assign({}, LOOK_PRESETS[0].look, save.look || {});
   save.unlocks = save.unlocks || {};
+  save.unlocks.senior = true; save.unlocks.masters = true;
   if (save.look.style !== 'sweater' || !save.unlocks.senior) save.look.style = 'suit';
   save.gbag = Object.assign({}, BAG_PRESETS[0].bag, save.gbag && !('panel' in save.gbag) ? { panel: '' } : {}, save.gbag || {});
   save.awards = save.awards || {};
@@ -1274,27 +1248,7 @@
   loadBag();
   // Online state (filled in by the Online section below). var so persist() can run before that section does.
   var fbAuth = null, fbDb = null, fbUser = null, cloudReady = false, cloudTimer = null, lastSavedJson = null;
-  // ---- Money watchdog: every payout in the game goes through paid(). If the bank grows by more than the game paid out,
-  // the money was added some other way: 5,000 or more at once (or 5,000 in total) bans; smaller amounts are flagged for review.
-  let coinBase = save.coins || 0, coinPaid = 0, coinOdd = 0;
-  function paid(n) { coinPaid += Math.max(0, +n || 0); }
-  // also flagged (not banned) for the creator to look at: earning unusually fast (over $25,000 in an hour)
-  let earnWin = [], rateFlagged = false, bankFlagged = false;
-  function moneyWatch() {
-    const c = save.coins || 0, extra = c - coinBase - coinPaid, now = Date.now(), et = (save.stats && save.stats.earnedTotal) || 0;
-    if (coinPaid > 0) { earnWin.push([now, coinPaid]); earnWin = earnWin.filter(x => now - x[0] < 3600e3); const hr = earnWin.reduce((a, x) => a + x[1], 0);
-      if (hr > 25000 && !rateFlagged && typeof cheatFlag === 'function') rateFlagged = true, cheatFlag('money', `earned ${money(Math.round(hr))} in under an hour`, false); }
-    if (c > et + 500 && c <= et + 5000 && !bankFlagged && typeof cheatFlag === 'function') bankFlagged = true, cheatFlag('money', `bank ${money(Math.round(c))} is more than everything ever earned (${money(Math.round(et))})`, false);
-    coinBase = c; coinPaid = 0;
-    if (!(extra > 0.5) || typeof cheatFlag !== 'function') return;
-    coinOdd += extra;
-    if (extra >= 5000) cheatFlag('money', `${money(Math.round(extra))} appeared in the bank at once (not paid out by the game)`, true);
-    else if (coinOdd >= 5000) cheatFlag('money', `${money(Math.round(coinOdd))} in total appeared in the bank that the game never paid out`, true);
-    else cheatFlag('money', `${money(Math.round(extra))} appeared in the bank that the game didn't pay out`, false);
-  }
   function persist() {
-    try { moneyWatch(); } catch (e) {}
-    save.sig = sigOf(save);
     const j = JSON.stringify(Object.assign({}, save, { mtime: 0 }));
     if (j !== lastSavedJson) { if (lastSavedJson !== null) save.mtime = Date.now(); lastSavedJson = j; pushCloud(); }
     try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) {}
@@ -1303,7 +1257,7 @@
   // Upgrades: every club has three separate tracks, each up to level 5:
   //   Power (+3% distance)   Accuracy (+1% gold zone)   Control (needle 9% slower)
   // A track can only go one level past the club's lowest track, so you have to upgrade a bit of everything at a time.
-  const MAX_LV = 5, COSTS = [150, 350, 700, 1200, 2000];   // (old single-level prices, kept for the anti-cheat money check)
+  const MAX_LV = 5;
   const UP_COSTS = [500, 1200, 2500, 5000, 9000], BALL_COSTS = [600, 1500, 3000, 5000, 7500, 10000, 15000];
   const TRACKS = [['p', 'Power'], ['a', 'Accuracy'], ['c', 'Control']];
   const upOf = c => { const u = save.up[c.id] || {}; return { p: u.p | 0, a: u.a | 0, c: u.c | 0 }; };
@@ -1595,7 +1549,7 @@
         PB(18, 'Room 23', 5, 543, { p: [[0, 0], [0, 220], [-60, 380], [-160, 520]], t: [0, 40], m: [44, 60], cl: [['v1+20', 14, 1, 9]],
           wt: [['v1', -96, 130, 50, 1], ['v2+40', -88, 90, 46, 1]], bk: [['v2', 26, 8, 6], ['g-6', -15, 5, 6], ['g+4', 14, 5, 5]] }),
       ] },
-    { id: 'clblack', name: 'Chami Links Black', unlock: 'valley', teeCol: '#111113', desc: 'The hardest course in the game. Chami Links from the black tees: the six toughest Bethpage Black holes, longer than the real thing, razor-thin fairways, tiny fast greens and big wind. Beat Deans Valley to play it.', wind: 22,
+    { id: 'clblack', name: 'Chami Links Black', unlock: 'valley', teeCol: '#111113', desc: 'The hardest course in the game. Chami Links from the black tees: the six toughest Bethpage Black holes, longer than the real thing, razor-thin fairways, tiny fast greens and big wind.', wind: 22,
       pal: Object.assign({}, CL_PAL, { sky: ['#4b5866', '#9aa8b4', '#d9dfe4'], fog: 0xc9d1d8, sun: 0xe8ecf0, leaves: [0x23542a, 0x1d4a24, 0x2b5f2d] }),
       holes: [
         CLB(11, 'Eleven', 4, 435, { p: [[0, 0], [0, 250], [60, 435]], bk: [['v1', -26, 10, 7], ['g-12', 15, 7, 8], ['g-14', -14, 6, 7]], wd: [['v1-40', 60, 24, 6]] }),
@@ -1725,7 +1679,7 @@
 
   const courseById = id => id === 'mini' ? MINI : (COURSES.find(c => c.id === id) || COURSES[0]);
   // (a course you've already finished a round on always stays open, even if the unlock order changes)
-  const isUnlocked = c => !c.unlock || (save.stats.roundsBy[c.unlock] || 0) > 0 || (save.stats.roundsBy[c.id] || 0) > 0;
+  const isUnlocked = () => true;
 
   // ================= Helpers =================
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -1962,6 +1916,19 @@
   const hexRgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
   const rgbHex = (r, g, b) => '#' + [r, g, b].map(v => Math.max(0, Math.min(255, v | 0)).toString(16).padStart(2, '0')).join('');
   const BALL_LINES = [['none', 'No line', 0], ['black', 'Black line', 200], ['red', 'Red line', 400], ['triple', 'Triple track', 1200], ['gold', 'Gold stripe', 1800]];
+  save.owned = MODELS.map(m => m.id);
+  save.up = Object.fromEntries(MODELS.map(m => [m.id, { p: MAX_LV, a: MAX_LV, c: MAX_LV }]));
+  save.ball = BALL_MAX;
+  save.unlocks.senior = true; save.unlocks.masters = true;
+  save.awards = Object.assign(save.awards, Object.fromEntries(AWARDS.map(a => [a.id, Date.now()])));
+  LOOK_PRESETS.forEach(p => OUTFIT_PARTS.forEach(k => { if (p.look[k]) grantC(k, p.look[k]); }));
+  Object.keys(PRICES).forEach(part => {
+    const colors = part.startsWith('bag-') ? BAG_SWATCHES[part.slice(4)] : SWATCHES[part];
+    (colors || []).forEach(([, hex]) => grantC(part, hex));
+  });
+  CLUB_COLORS.forEach(([, hex]) => { if (hex) save.ownedLook['club:' + hex.toLowerCase()] = 1; });
+  BALL_LINES.forEach(([id]) => { save.ownedLook[`ball-line:${id}`] = 1; });
+  save.ownedLook['bag-logo:custom'] = 1;
   save.ballLook = Object.assign({ color: '#f7f7f2', line: 'none' }, save.ballLook || {});
   function paintBall(g, W, H, look) {
     const c = ballColOf(look);
@@ -3705,8 +3672,7 @@
     }
     if (lastClub === 0) {
       const d = shotD;
-      if (d > 450) cheatFlag('drive', `${d} yd drive`, false);
-      else if (d > save.stats.longest) { save.stats.longest = d; showRating(`LONGEST DRIVE · ${d} YDS`, '#FFE08A'); checkAwards(); }
+      if (d > save.stats.longest) { save.stats.longest = d; showRating(`LONGEST DRIVE · ${d} YDS`, '#FFE08A'); checkAwards(); }
     }
     lastClub = -1;
     if (course.ctp) return ctpDone(Math.hypot(ball.x - hole.pin.x, ball.y - hole.pin.y));
@@ -3759,7 +3725,7 @@
     for (const a of AWARDS) {
       if (save.awards[a.id] || !awardDone(a)) continue;
       save.awards[a.id] = Date.now(); changed = true;
-      if (a.pay) { paid(a.pay); save.coins += a.pay; save.stats.earnedTotal += a.pay; }
+      if (a.pay) { save.coins += a.pay; save.stats.earnedTotal += a.pay; }
       const bag = BAG_PRESETS.find(p => p.award === a.id);
       toastQ.push({ a, bag });
     }
@@ -3785,7 +3751,7 @@
       if (d <= -3) st.albatross++;
       if (lastShot && !lastShot.putter && strokes > 1 && lastShot.lie !== 'green') { st.chipIns++; if (lastShot.lie === 'sand') st.sandHoles++; showRating(lastShot.lie === 'sand' ? 'HOLED FROM THE SAND!' : 'CHIP IN!', '#FFE08A'); }
       if (lastShot && lastShot.putter && lastShot.dist >= 10) st.longPutts++;
-      if (strokes === 1) { roundAces++; st.aceRun = (st.aceRun || 0) + 1; save.badges.ace = 1; aceCheck(hole); postAce(course, holeIdx, hole); }
+      if (strokes === 1) { roundAces++; st.aceRun = (st.aceRun || 0) + 1; save.badges.ace = 1; postAce(course, holeIdx, hole); }
       else st.aceRun = 0;
     } else if (strokes === 1) st.miniAces++;
     const pay = course.mini ? (MINI_PAY[String(Math.max(-2, d))] || 0) : payFor(strokes, hole.par); earned[holeIdx] = pay;
@@ -3829,7 +3795,6 @@
   function resumeLive(finish) {
     const c = liveCourse(), L = save.live; $('liveOv').classList.add('hidden');
     if (!c) { clearLive(); return; }
-    if (banned()) { showBanned(); return; }
     ensureAudio();
     course = c; HOLES = c.holes; if (!c.mini) save.course = c.id;
     applyCourseLook(c);
@@ -4538,7 +4503,7 @@
   const holdersRef = id => fbDb.collection('badgeHolders').doc(id).collection('who');
   const badgeCountsRef = () => fbDb.collection('meta').doc('badgeCounts');
   function regBadges() {
-    const u = meUser(); if (!u || !fbDb || banned()) return;
+    const u = meUser(); if (!u || !fbDb) return;
     save.badgeReg = save.badgeReg || {};
     ['ace', 'champ'].forEach(async id => {
       if (!hasBadge(id) || save.badgeReg[id] === u.uid) return;
@@ -4633,12 +4598,11 @@
     const mine = save.posted[key];
     if (mine && !better(mine)) return Promise.resolve(false);
     return ref.set(Object.assign(doc, { t: serverTime() })).then(() => { save.posted[key] = { rel: doc.rel, yd: doc.yd }; return true; },
-      e => { if (e && e.code === 'permission-denied' && !banned()) { save.posted[key] = { rel: doc.rel, yd: doc.yd }; return false; } throw e; });   // (the board already has this or better)
+      e => { if (e && e.code === 'permission-denied') { save.posted[key] = { rel: doc.rel, yd: doc.yd }; return false; } throw e; });   // (the board already has this or better)
   }
   // forget remembered bests for daily boards more than 2 days old
   { const cut = prevDay(prevDay(etDay())); for (const k in save.posted || {}) { const d = k.split('|').pop(); if (/^\d{4}-\d{2}-\d{2}$/.test(d) && d < cut) delete save.posted[k]; } }
   async function postOnline(cid, entry) {
-    if (banned()) throw new Error('banned');
     const u = await ensureOnlineUser(), day = etDay(new Date(entry.date)), uid = u.uid, b = myBadge();
     const doc = nb => Object.assign({ name: boardName(), uid, rel: entry.rel, strokes: entry.strokes, date: entry.date, day }, b && !nb ? { badge: b } : {});
     const send = nb => Promise.all([postBest(scoresRef(cid).doc(uid), doc(nb), o => entry.rel < o.rel, `${uid}|${cid}`), postBest(scoresRef(cid, day).doc(uid), doc(nb), o => entry.rel < o.rel, `${uid}|${cid}|${day}`)]);
@@ -4658,7 +4622,6 @@
     return rows.slice(0, limit);
   }
   async function postCtp(yd) {
-    if (banned()) throw new Error('banned');
     const u = await ensureOnlineUser(), day = ctpCourse().day, uid = u.uid, b = myBadge();
     const ydr = Math.round(yd * 1000) / 1000, now = Date.now();
     await postBest(ctpRef(day).doc(uid), Object.assign({ name: boardName(), uid, yd: ydr, date: now, day }, b ? { badge: b } : {}), o => yd < o.yd, `${uid}|ctp|${day}`);
@@ -4671,7 +4634,7 @@
   // After a day ends, pay out any top-3 finishes this golfer had in that day's tournaments.
   let claiming = false;
   async function claimPrizes() {
-    if (!ONLINE || !meUser() || (fbUser && !cloudReady) || claiming || banned()) return;
+    if (!ONLINE || !meUser() || (fbUser && !cloudReady) || claiming) return;
     const today = etDay(), days = Object.keys(save.tourney).filter(d => d < today), uid = meUid();
     if (!days.length) return;
     claiming = true;
@@ -4693,7 +4656,7 @@
     } catch (e) {}
     if (wins.length) {
       const total = wins.reduce((a, w) => a + w.prize, 0), firsts = wins.some(w => w.place === 0);
-      paid(total); save.coins += total; save.stats.earnedTotal += total; setTimeout(cloudSaveSoon, 0);
+      save.coins += total; save.stats.earnedTotal += total; setTimeout(cloudSaveSoon, 0);
       if (firsts && !save.badges.champ) { save.badges.champ = 1; regBadges(); }
       const medal = ['🥇 1st', '🥈 2nd', '🥉 3rd'];
       $('prizeBody').innerHTML = wins.map(w => `${medal[w.place]} at ${esc(w.label)} (${w.score}) · ${w.day.slice(5).replace('-', '/')} · <b>+${money(w.prize)}</b>`).join('<br>')
@@ -4799,11 +4762,10 @@
     if (u && u.isAnonymous) { fbGuest = u; fbUser = null; } else { fbUser = u || null; fbGuest = null; }
     cloudReady = false; renderAcct();
     if (fbUser) { await syncFromCloud(); renderAcct(); countSignin(); }
-    if (meUser()) { loadRemoteBadges(); syncBan(); presence('home'); claimPrizes(); }
-    if (!checkedOnce && (u || !fbAuth)) { checkedOnce = true; startupChecks(); }
+    if (meUser()) { loadRemoteBadges(); presence('home'); claimPrizes(); }
     mpOnAuth();
     // everyone gets a quiet guest account, so posting a score only ever needs a name
-    if (!u && fbAuth) ensureOnlineUser().catch(() => { if (!checkedOnce) { checkedOnce = true; startupChecks(); } });
+    if (!u && fbAuth) ensureOnlineUser().catch(() => {});
     if (!$('home').classList.contains('hidden')) {
       if (tab === 'course') fillBoard(course); if (tab === 'ctp') renderCtpTab(); if (tab === 'golfer') renderGolfer();
       renderCtpCard(); if (tab === 'play') { renderTourCard(); renderAceBar(); }
@@ -4812,7 +4774,7 @@
   if (fbAuth) {
     fbAuth.getRedirectResult().catch(() => {});
     fbAuth.onAuthStateChanged(u => { onUser(u); });
-  } else setTimeout(() => { if (!checkedOnce) { checkedOnce = true; startupChecks(); } }, 0);
+  }
 
   function rowsHtml(rows, emptyMsg) {
     if (!rows.length) return `<div class="empty">${emptyMsg}</div>`;
@@ -4921,7 +4883,7 @@
   const addAce = (day, doc) => acesDayRef(day).set({ list: firebase.firestore.FieldValue.arrayUnion(doc) }, { merge: true });
   function flushAces() { if (needsName()) return; const q = pendingAces.splice(0); q.forEach(x => addAce(x.day, Object.assign(x.doc, { name: boardName() })).then(() => { acesCache = null; }).catch(() => {})); }
   async function postAce(c, i, h) {
-    if (!ONLINE || banned()) return;
+    if (!ONLINE) return;
     try {
       const u = await ensureOnlineUser(), day = etDay(), b = myBadge(), cname = c.ctp ? 'Closest to the Pin' : c.name;
       const doc = Object.assign({ name: boardName(), uid: u.uid, cid: c.id, course: cname, hole: i + 1, yds: h.yds | 0, date: Date.now() }, b ? { badge: b } : {});
@@ -4939,7 +4901,7 @@
   function regPlayer() {
     clearTimeout(regTimer);
     regTimer = setTimeout(() => {
-      const u = meUser(); if (!u || !fbDb || banned() || needsName()) return;
+      const u = meUser(); if (!u || !fbDb || needsName()) return;
       const name = boardName(), key = `${u.uid}|${name}|${fbUser ? 1 : 0}`;
       if (save.dirKey === key) return;
       fbDb.collection('players').doc(u.uid).set({ name, n: name.toLowerCase(), g: !!fbUser, at: Date.now() })
@@ -4948,86 +4910,6 @@
   }
   function bumpDaily(inc) { for (const k in inc) track('cg_' + k, { value: inc[k] }); }
   if (!save.firstDay) { save.firstDay = etDay(); bumpDaily({ newPlayers: 1 }); }
-
-  // ================= Anti-cheat and bans =================
-  // What gets caught: editing the save (money, upgrades, unlocks), money or gear the game never paid out,
-  // impossible rounds (a pile of aces, aces in a row, rounds far too low or too fast) and absurd drives.
-  // Strong signs ban the device right away (and its account online); smaller ones are flagged for the creator to review.
-  const BAN_KEY = 'cg-ban';
-  let banInfo = null;
-  try { banInfo = JSON.parse(localStorage.getItem(BAN_KEY)); } catch (e) {}
-  const banned = () => !!banInfo && !isCreator();
-  function showBanned() {
-    const o = $('bannedOv'); if (!o) return;
-    o.classList.toggle('hidden', !banned());
-    if (banned()) $('banWhy').textContent = banInfo.reason ? `Reason: ${banInfo.reason}` : '';
-  }
-  const storeBan = () => { try { banInfo ? localStorage.setItem(BAN_KEY, JSON.stringify(banInfo)) : localStorage.removeItem(BAN_KEY); } catch (e) {} };
-  function banMe(reason) {
-    if (isCreator() || banInfo) return;
-    banInfo = { reason, at: Date.now(), uid: meUid(), remote: false }; storeBan();
-    showBanned(); syncBan();
-  }
-  async function syncBan() {   // keep the ban on this device and the online ban list in step
-    if (isCreator()) { if (banInfo) { banInfo = null; storeBan(); } showBanned(); return; }
-    const u = meUser(); if (!u || !fbDb) { showBanned(); return; }
-    try {
-      const ref = fbDb.collection('bans').doc(u.uid), snap = await ref.get();
-      if (snap.exists) { const d = snap.data(); banInfo = { reason: d.reason || 'Banned by the creator', at: d.at || Date.now(), uid: u.uid, remote: true }; storeBan(); }
-      else if (banInfo && banInfo.remote && banInfo.uid === u.uid) { banInfo = null; storeBan(); }   // the creator lifted the ban
-      else if (banInfo && !banInfo.remote) {
-        await ref.set({ auto: true, reason: String(banInfo.reason).slice(0, 140), name: boardName(), at: banInfo.at, t: serverTime() });
-        banInfo.remote = true; banInfo.uid = u.uid; storeBan();
-      }
-    } catch (e) {}
-    showBanned();
-  }
-  setInterval(() => { if (!document.hidden && meUser()) syncBan(); }, 900000);   // every 15 minutes
-  const flagsSent = {};
-  function cheatFlag(kind, detail, strong) {
-    if (isCreator()) return;
-    const key = kind + ':' + detail; if (flagsSent[key]) return; flagsSent[key] = 1;
-    const u = meUser();
-    if (u && fbDb) fbDb.collection('flags').add({ uid: u.uid, name: boardName(), kind, detail: String(detail).slice(0, 140), strong: !!strong, google: !!fbUser, at: Date.now(), t: serverTime() }).catch(() => {});
-    if (strong) banMe(`Suspected cheating: ${detail}`);
-  }
-  function roundCheck(rel) {
-    const n = HOLES.length; if (course.mini || course.ctp || !n || (MP && MP.started)) return;
-    if (roundAces >= 4) cheatFlag('aces', `${roundAces} holes in one in one round at ${course.name}`, true);
-    else if (rel <= -Math.max(10, n)) cheatFlag('score', `${fmtRel(rel)} over ${n} holes at ${course.name}`, true);
-    else if (rel <= -Math.max(6, Math.ceil(n * 0.5))) cheatFlag('score', `${fmtRel(rel)} over ${n} holes at ${course.name}`, false);
-    const secs = (Date.now() - roundStart) / 1000;
-    if (roundStart && secs < n * 6) cheatFlag('speed', `${n} holes in ${Math.round(secs)} seconds`, true);
-  }
-  function aceCheck(h) {
-    const run = save.stats.aceRun || 0;
-    if (run >= 4) cheatFlag('aces', `${run} holes in one in a row`, true);
-    else if (run === 3) cheatFlag('aces', '3 holes in one in a row', false);
-    if (h.yds > 420) cheatFlag('aces', `hole in one on a ${h.yds} yd hole`, true);
-  }
-  // money and gear can't add up to more than the game has ever paid you
-  function econCheck() {
-    const s = save.stats, earned = s.earnedTotal || 0;
-    let spent = save.owned.reduce((a, id) => a + ((modelById(id) || {}).price || 0), 0);
-    for (const id in save.up) {
-      const m = modelById(id); if (!m) continue;
-      const u = upOf(m), base = Math.min(MAX_LV, (save.upBase || {})[id] || 0);
-      for (let l = 0; l < base; l++) spent += COSTS[l];
-      tracksOf(m).forEach(([k]) => { for (let l = base; l < u[k]; l++) spent += upCost(m, k, l); });
-    }
-    for (let l = 0; l < Math.min(BALL_MAX, save.ball | 0); l++) spent += BALL_COSTS[l];
-    const worth = (save.coins || 0) + spent;
-    if (save.coins > 3000000 || worth > earned + 60000) cheatFlag('money', `${money(Math.round(worth))} in money and gear but only ${money(Math.round(earned))} ever earned`, true);
-    if (save.coins < 0 || !isFinite(save.coins)) cheatFlag('money', 'impossible bank balance', true);
-    // your bank can never hold more than the game has ever paid you (spending and buy-ins only take money away)
-    if (save.coins > earned + 5000) cheatFlag('money', `${money(Math.round(save.coins))} in the bank but only ${money(Math.round(earned))} ever earned`, true);
-  }
-  function startupChecks() {
-    if (isCreator()) { syncBan(); return; }
-    if (tamperedSave) cheatFlag('save', 'the game save was edited by hand', true);
-    econCheck();
-    showBanned();
-  }
 
   // ================= Play Friends: friend codes, 1v1 wagers, 2v2 and Foursomes (Firebase) =================
   // Everything about a match lives in one Firestore doc (matches/{CODE}). Each golfer only appends to its
@@ -5069,7 +4951,7 @@
   }
   function refundBuyIn(id) {
     const rec = save.mp[id]; if (!rec || !rec.paid || rec.started || rec.settled) return;
-    if (rec.wager) { paid(rec.wager); save.coins += rec.wager; }
+    if (rec.wager) save.coins += rec.wager;
     delete save.mp[id]; persist(); $('homeCoins').textContent = money(save.coins);
   }
   const teamsOf = m => [m.t0, m.t1, m.t2, m.t3].slice(0, m.nt || 2).map(t => t || []);
@@ -5138,7 +5020,7 @@
   function netErr(e) {
     const c = e && e.code;
     if (c === 'resource-exhausted') return "Online play is taking a break: the game hit today's free online limit. It's back at 3am ET.";
-    if (c === 'permission-denied') return banned() ? "You're banned from online play." : "The server said no to that. Reload the game and try again.";
+    if (c === 'permission-denied') return "The server said no to that. Reload the game and try again.";
     if (c === 'unavailable' || c === 'deadline-exceeded' || !navigator.onLine) return "Couldn't reach the server. Check the Wi-Fi and try again.";
     return 'Something went wrong. Reload the game and try again.';
   }
@@ -5536,13 +5418,9 @@
     const tie = res.win === -1, won = !res.coop && res.win === MP.team, split = tie && winners.includes(MP.team);
     const prize = winners.includes(MP.team) ? Math.floor(pot / winners.reduce((a, t) => a + MP.teams[t].length, 0)) : 0;
     if (!rec.settled) {
-      rec.settled = 1; paid(prize + holeMoney); save.coins += prize + holeMoney;
+      rec.settled = 1; save.coins += prize + holeMoney;
       save.stats.earnedTotal += holeMoney + Math.max(0, prize - m.wager);
       save.stats.mpWins = (save.stats.mpWins || 0) + (won ? 1 : 0); save.stats.mpPlayed = (save.stats.mpPlayed || 0) + 1;
-      // big pots, and pots won because the other side quit, are how money gets passed between accounts: flag them for review
-      const others = Object.values(m.players || {}).filter(p => p !== m.players[fbUser.uid]).map(p => p.name).join(', ').slice(0, 60);
-      if (prize - m.wager >= 5000) cheatFlag('money', `won ${money(prize - m.wager)} from a ${money(m.wager)} friends match vs ${others}${res.forfeit ? ' (by forfeit)' : ''}`, false);
-      else if (res.forfeit && m.wager >= 1000 && prize > m.wager) cheatFlag('money', `won a ${money(m.wager)} match by forfeit vs ${others}`, false);
       persist(); checkAwards();
     }
     save.mpActive = null; persist();
@@ -6358,7 +6236,6 @@
   }
 
   function startRound(c) {
-    if (banned()) { showBanned(); return; }
     ensureAudio();
     course = c; HOLES = c.holes; if (!c.ctp) save.course = c.id; persist();
     applyCourseLook(c);
@@ -6409,7 +6286,7 @@
     $('earnBox').innerHTML = lines;
 
     const wasLocked = COURSES.filter(c => !isUnlocked(c)).map(c => c.id);
-    paid(total); save.coins += total; s.earnedTotal += total;
+    save.coins += total; s.earnedTotal += total;
     if (!course.mini && !roundCut) { s.rounds++; s.strokesTotal += ts; s.parTotal += tp; if (rel < 0) s.underPar++; }
     if (!roundCut) s.roundsBy[course.id] = (s.roundsBy[course.id] || 0) + 1;
     let mastersLine = '';
@@ -6420,7 +6297,6 @@
     let line, rank = 0;
     if (roundCut) { line = 'Ended early: no round bonus and no leaderboard'; lastEntry = null; }
     else {
-      roundCheck(rel);
       bumpDaily({ rounds: 1 });
       const best = s.bestBy[course.id];
       if (best == null || rel < best) { line = best == null ? 'First round here!' : 'New course best!'; s.bestBy[course.id] = rel; }
@@ -6439,7 +6315,7 @@
 
   function showPostBox(c, entry) {
     const box = $('postBox');
-    if (!ONLINE || !entry || banned()) { box.innerHTML = ''; return; }
+    if (!ONLINE || !entry) { box.innerHTML = ''; return; }
     // No sign-in needed: post as a guest with your name. Still called "Player"? You're asked for a name first.
     const post = async () => {
       if (!(await ensureName())) { box.innerHTML = '<button id="postBtn">Pick a name to post this score</button>'; $('postBtn').onclick = post; return; }
@@ -6472,7 +6348,7 @@
       pay = Math.max(0, ctpPay(ft) - ctpPay(old == null ? null : old * 3));
       st.best = yd; line = old == null ? "Today's best!" : 'New best today!';
     }
-    if (pay) { paid(pay); save.coins += pay; save.stats.earnedTotal += pay; }
+    if (pay) { save.coins += pay; save.stats.earnedTotal += pay; }
     let unlockLine = '';
     if (ft != null && ft <= CTP_UNLOCK_FT && !unlocked('senior')) { save.unlocks.senior = true; unlockLine = '🔓 You unlocked the Senior Sweater! Wear it from the Golfer tab.'; }
     if (yd === 0) { save.badges.ace = 1; postAce(course, 0, hole); }
@@ -6491,7 +6367,7 @@
     $('ctpAgain').style.display = left > 0 ? '' : 'none';
     $('ctpAgain').textContent = `Try again (${left} left)`;
     if (yd === 0 || (ft != null && ft <= CTP_UNLOCK_FT)) { burst(160); sfx.perfect(); }
-    if (ONLINE && !banned()) {
+    if (ONLINE) {
       const box = document.createElement('div'); box.className = 'tnote'; box.style.marginTop = '8px'; $('ctpInfo').appendChild(box);
       const post = async () => {
         if (!(await ensureName())) { box.innerHTML = '<button class="main sm">Pick a name to post your best</button>'; box.querySelector('button').onclick = post; return; }
@@ -6582,7 +6458,7 @@
   $('homeBtn').addEventListener('click', () => { showHome(); setTab('course'); });
 
   // ================= Creator tools (only for the creator's Google account; the rules enforce this too) =================
-  // Kept small to stay inside Firebase's free plan: cheat flags, bans and the leaderboards (remove a score, ban, Creator's Pick).
+  // Kept small to stay inside Firebase's free plan: player search and leaderboards.
   // Player counts, players online and rounds per day come from Google Analytics instead (free, and it doesn't use Firebase).
   let admView = 'players', admCid = 'pines', admMode = 'daily';
   // Creator's Pick for the golfers who helped with the game. The creator's device hands these out on its own when exactly
@@ -6607,8 +6483,8 @@
     } catch (e) {}
     giftBusy = false;
   }
-  const admTabs = [['players', '🔎 Find a player'], ['flags', '🚩 Cheat flags'], ['bans', '⛔ Bans'], ['boards', '🏆 Leaderboards']];
-  let admQ = '', admFound = null, admGifted = {}, admMoneyOnly = false;
+  const admTabs = [['players', '🔎 Find a player'], ['boards', '🏆 Leaderboards']];
+  let admQ = '', admFound = null, admGifted = {};
   // search the player directory by the start of a name (only the matches are read)
   async function admSearch(q) {
     q = String(q || '').trim().toLowerCase(); admQ = q;
@@ -6628,24 +6504,12 @@
       if (admView === 'players') {
         const rows = admFound || [];
         v.innerHTML = `<div class="mprow"><input class="mpin" id="admQ" placeholder="Type the start of a name" value="${esc(admQ)}" autocomplete="off" spellcheck="false"><button class="main sm" data-adm-search="1">Search</button></div>
-          <div class="mplist" style="margin-top:10px">${admFound == null ? '<div class="empty">Search for a golfer by name to give them Creator\'s Pick or ban them.</div>'
+          <div class="mplist" style="margin-top:10px">${admFound == null ? '<div class="empty">Search for a golfer by name to give them Creator\'s Pick.</div>'
             : rows.length ? rows.map(p => `<div class="mpli"><div class="nm"><b>${admGifted[p.uid] ? '🎁 ' : ''}${esc(p.name || 'Golfer')}</b><small>${p.g ? 'Google' : 'Guest'} · ${p.at ? 'joined ' + fmtDate(p.at) : ''} · ID ${esc(p.uid.slice(0, 6))}</small></div>
-              <button class="${admGifted[p.uid] ? 'ghost' : 'main'} sm" data-adm-gift="${p.uid}" data-n="${esc(p.name || '')}">${admGifted[p.uid] ? 'Take back 🎁' : 'Give 🎁'}</button><button class="ghost sm" data-adm-ban="${p.uid}" data-n="${esc(p.name || '')}">Ban</button></div>`).join('')
+              <button class="${admGifted[p.uid] ? 'ghost' : 'main'} sm" data-adm-gift="${p.uid}" data-n="${esc(p.name || '')}">${admGifted[p.uid] ? 'Take back 🎁' : 'Give 🎁'}</button></div>`).join('')
             : `<div class="empty">No golfers found starting with "${esc(admQ)}".</div>`}</div>
           <div class="tnote">🎁 = Creator's Pick, for golfers who helped make the game or had a suggestion added. Golfers show up here once they've picked a name (anyone who played before this update shows up the next time they open the game).</div>`;
         const qi = $('admQ'); if (qi && !admQ) qi.focus();
-      } else if (admView === 'flags') {
-        const all = await fbDb.collection('flags').orderBy('at', 'desc').limit(50).get();
-        const s = { docs: all.docs.filter(d => !admMoneyOnly || d.data().kind === 'money') };
-        v.innerHTML = `<div class="seg" style="margin-bottom:10px"><button data-adm-money="0" class="${admMoneyOnly ? '' : 'on'}">ALL FLAGS</button><button data-adm-money="1" class="${admMoneyOnly ? 'on' : ''}">💰 MONEY ONLY</button></div>` + (s.docs.length ? `<button class="ghost sm" data-adm-clearflags="1" style="margin-bottom:10px">🧹 Clear all flags (${s.docs.length}${s.docs.length >= 50 ? '+' : ''})</button>` : '')
-          + `<div class="mplist">${s.docs.map(d => { const f = d.data(); return `<div class="mpli"><div class="nm"><b>${esc(f.name || 'Golfer')}</b> ${f.strong ? '<span class="pill2 r">auto-banned</span>' : '<span class="pill2">flagged</span>'}<small>${esc(f.kind || '')}: ${esc(f.detail || '')} · ${f.at ? ago(f.at) : ''}${f.google ? ' · Google' : ' · guest'}</small></div>
-          <button class="ghost sm" data-adm-dismiss="${d.id}">Dismiss</button>${f.strong ? '' : `<button class="main sm" data-adm-ban="${f.uid}" data-n="${esc(f.name || '')}">Ban</button>`}</div>`; }).join('') || '<div class="empty">No cheat flags. 🎉</div>'}</div>
-          <div class="tnote">Players online, players per day and rounds played are in Google Analytics (it's free and doesn't use up Firebase).</div>`;
-      } else if (admView === 'bans') {
-        const s = await fbDb.collection('bans').orderBy('at', 'desc').limit(100).get();
-        v.innerHTML = `<div class="mplist">${s.docs.map(d => { const b = d.data(); return `<div class="mpli"><div class="nm"><b>${esc(b.name || 'Golfer')}</b> ${b.auto ? '<span class="pill2 r">auto</span>' : '<span class="pill2">by you</span>'}<small>${esc(b.reason || '')} · ${b.at ? ago(b.at) : ''}</small></div>
-          <button class="ghost sm" data-adm-unban="${d.id}">Unban</button></div>`; }).join('') || '<div class="empty">Nobody is banned.</div>'}</div>
-          <div class="tnote">Unbanning lets them play again the next time their game checks in (within about 15 minutes).</div>`;
       } else if (admView === 'boards') {
         await autoGifts();
         const list = COURSES.concat([MINI]);
@@ -6653,7 +6517,7 @@
         v.innerHTML = `<div class="opts" style="flex-wrap:wrap;margin-bottom:8px">${list.map(c => `<button data-adm-cid="${c.id}" class="${admCid === c.id ? 'on' : ''}" style="flex:0 1 auto">${esc(c.name)}</button>`).join('')}</div>
           <div class="seg"><button data-adm-mode="daily" class="${admMode === 'daily' ? 'on' : ''}">TODAY</button><button data-adm-mode="all" class="${admMode === 'all' ? 'on' : ''}">ALL-TIME</button></div>
           <div class="mplist">${rows.map((r, i) => `<div class="mpli"><div class="nm"><b>${i + 1}. ${badgeHtml(r.badge)}${esc(r.name)}</b><small>${fmtRel(r.rel)} (${r.strokes}) · ${fmtDate(r.date)}</small></div>
-            <button class="ghost sm" data-adm-gift="${r.pid}" data-n="${esc(r.name)}" title="Give or take back Creator's Pick">🎁</button><button class="ghost sm" data-adm-del="${r.pid}">Remove</button><button class="main sm" data-adm-ban="${r.pid}" data-n="${esc(r.name)}">Ban</button></div>`).join('') || '<div class="empty">No scores on this board.</div>'}</div>
+            <button class="ghost sm" data-adm-gift="${r.pid}" data-n="${esc(r.name)}" title="Give or take back Creator's Pick">🎁</button><button class="ghost sm" data-adm-del="${r.pid}">Remove</button></div>`).join('') || '<div class="empty">No scores on this board.</div>'}</div>
           <div class="tnote">🎁 gives (or takes back) the Creator's Pick badge: it's for golfers who helped make the game or had a suggestion added.</div>
           <div class="tnote"><button class="linkbtn" data-adm-recount="1">🔢 Recount badge holders</button> (use once after publishing new Firebase rules)</div>
           <div class="tnote">🥚 Rare home screen messages (0.01% each): ${EGGS.map((m, i) => `<button class="linkbtn" data-adm-egg="${i}">${esc(m)}</button>`).join(' · ')} (tap to preview)</div>`;
@@ -6661,20 +6525,6 @@
     } catch (e) {
       v.innerHTML = `<div class="empty">Couldn't load this (${esc(e.code || e.message || 'error')}). Make sure the newest firestore.rules are published in the Firebase console.</div>`;
     }
-  }
-  // banning also wipes their scores from every board (all-time, today and today's Closest to the Pin)
-  async function admBan(uid, name) {
-    const reason = prompt(`Ban ${name || 'this golfer'}? Type a reason (they'll see it):`, 'Cheating');
-    if (reason == null) return;
-    await admBanNow(uid, name, reason);
-  }
-  async function admBanNow(uid, name, reason, auto = false) {
-    await fbDb.collection('bans').doc(uid).set({ auto: !!auto, reason: String(reason).slice(0, 140) || 'Banned by the creator', name: name || '', at: Date.now(), t: serverTime() });
-    const day = etDay(), dels = [];
-    COURSES.concat([MINI]).forEach(c => { dels.push(scoresRef(c.id).doc(uid).delete(), scoresRef(c.id, day).doc(uid).delete()); });
-    dels.push(ctpRef(day).doc(uid).delete());
-    await Promise.all(dels.map(p => p.catch(() => {})));
-    tourCache = null;
   }
   $('adminBody').addEventListener('click', async e => {
     const b = e.target.closest('button'); if (!b || !isCreator()) return;
@@ -6685,21 +6535,9 @@
       if (d.admView) admView = d.admView;
       else if (d.admCid) admCid = d.admCid;
       else if (d.admEgg != null) { setTab('play'); rollEgg(+d.admEgg); return; }
-      else if (d.admMoney != null) admMoneyOnly = d.admMoney === '1';
       else if (d.admSearch) { await admSearch($('admQ') ? $('admQ').value : admQ); }
       else if (d.admRecount) { const g = await recountBadges(); alert(`Badge counts fixed: 🎯 ${g.ace} Hole in One · 🏆 ${g.champ} Daily Champion`); }
       else if (d.admMode) admMode = d.admMode;
-      else if (d.admBan) await admBan(d.admBan, d.n);
-      else if (d.admUnban) { if (!confirm('Unban this golfer?')) return; await fbDb.collection('bans').doc(d.admUnban).delete(); }
-      else if (d.admDismiss) await fbDb.collection('flags').doc(d.admDismiss).delete();
-      else if (d.admClearflags) {
-        const col = 'flags';
-        if (!confirm('Clear ALL cheat flags? (Bans stay.)')) return;
-        for (let i = 0; i < 20; i++) {
-          const snap = await fbDb.collection(col).limit(200).get(); if (snap.empty) break;
-          const batch = fbDb.batch(); snap.docs.forEach(x => batch.delete(x.ref)); await batch.commit();
-        }
-      }
       else if (d.admDel) { if (!confirm('Remove this score from the board?')) return; await scoresRef(admCid, admMode === 'daily' ? etDay() : null).doc(d.admDel).delete(); tourCache = null; }
       else if (d.admGift) {
         const ref = fbDb.collection('gifts').doc(d.admGift), has = (await ref.get()).exists;
@@ -6713,7 +6551,7 @@
   $('adminBody').addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter' && e.target.id === 'admQ') { const b = document.querySelector('[data-adm-search]'); if (b) b.click(); } });
 
   // ---- Pop-ups: the first-time welcome, "What's new" after an update, and one-time tips ----
-  // What's new only lists things players can see in the game (nothing about anti-cheat, analytics or creator tools).
+  // What's new only lists things players can see in the game (nothing about analytics or creator tools).
   // To announce a new update: change NEWS_VER and replace NEWS.
   const NEWS_VER = '2026.10.16';
   const NEWS = [
@@ -6727,8 +6565,8 @@
     ['🏅', '<b>Premium Badges</b> show as gold medallions on the home screen and next to your golfer.'],
   ];
   const TIPS = {
-    clubs: ['Upgrade your clubs 🏌️', 'Spend your winnings here to <b>upgrade your clubs</b>: more <b>Power</b> to hit it farther, more <b>Accuracy</b> for a bigger gold zone, and more <b>Control</b> for a steadier swing. You can buy brand new clubs too.'],
-    golfer: ['Make it yours 🎨', 'You can customize <b>everything</b> here, from your <b>outfit</b> and <b>golf bag</b> to your <b>ball</b>. Tap anything to try it on before you buy.'],
+    clubs: ['Your clubs 🏌️', 'Every club is available and fully upgraded. Choose a model for its distance, accuracy, and feel.'],
+    golfer: ['Make it yours 🎨', 'All outfits, golf bags, colors, and ball markings are available to customize here.'],
   };
   save.tips = save.tips || {};
   const isNewGolfer = !hadSave && !(save.stats.rounds > 0);
